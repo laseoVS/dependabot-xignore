@@ -1,0 +1,24 @@
+--- update_script.rb	2024-02-12 17:02:09.173285873 +0100
++++ update_script_custom.rb	2024-02-12 16:59:49.289178989 +0100
+@@ -520,6 +520,21 @@
+ )
+ 
+ dependencies = parser.parse
++
++# REMOVE DEPENDENCIES DEFINED IN XIGNORE ENV VARIABLE
++xignore = ENV["XIGNORE"] || ""
++dependencies.each do |d| 
++  xignore.split(",").each do |j|
++    if d.name == j
++      puts "FOUND XIGNORED DEPENDENCY: #{d.name} #{d.version} REMOVED FROM DEPENDENCY CHECK"
++    end
++  end
++end
++
++xignore.split(",").each do |i|
++  dependencies.delete_if { |d| d.name.downcase == i.downcase.strip }
++end
++
+ puts "Found #{dependencies.count(&:top_level?)} dependencies"
+ dependencies.select(&:top_level?).each { |d| puts " - #{d.name} (#{d.version})" }
+ 
