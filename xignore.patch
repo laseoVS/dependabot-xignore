@@ -1,22 +1,131 @@
---- update_script.rb	2024-02-12 17:02:09.173285873 +0100
-+++ update_script_custom.rb	2024-02-12 16:59:49.289178989 +0100
-@@ -520,6 +520,21 @@
+--- update_script.rb	2024-02-12 23:40:15.334977150 +0100
++++ update_script_xignore.rb	2024-02-12 23:39:57.075581695 +0100
+@@ -4,6 +4,7 @@
+ 
+ require "json"
+ require "logger"
++require "fileutils"
+ require "dependabot/logger"
+ 
+ Dependabot.logger = Logger.new($stdout)
+@@ -407,6 +408,57 @@
+   puts
+ end
+ 
++def remove_deps_pyproject_toml(repo, xignore)
++  if File.exist?("#{repo}/pyproject.toml")
++    File.rename("#{repo}/pyproject.toml", "#{repo}/pyproject.orig")
++    f = File.open("#{repo}/pyproject.toml", "w")
++    write = true
++    File.foreach("#{repo}/pyproject.orig") do |line|
++      xignore.each do |i|
++        if line.include?(i)
++          write = false
++        end
++      end
++      if write
++        f.write(line)
++      end
++      write = true
++    end
++    f.close
++  end
++end
++
++def remove_deps_poetry_lock(repo, xignore)
++  if File.exist?("#{repo}/poetry.lock")
++    File.rename("#{repo}/poetry.lock", "#{repo}/poetry.orig")
++    f = File.open("#{repo}/poetry.lock", "w")
++    write = true
++    line1 = ""
++    line2 = ""
++    File.foreach("#{repo}/poetry.orig") do |line|
++      line2 = line1
++      line1 = line
++
++      xignore.each do |i|
++        if line.include?("name = \"#{i}\"")
++          write = false
++        end
++      end
++      if write
++        f.write(line2)
++      end
++
++      if write == false
++        if line.include?("[[package]]")
++          write = true
++        end
++      end
++    end
++    f.write(line1)
++    f.close
++  end
++end
++
+ Dependabot::SimpleInstrumentor.subscribe do |*args|
+   name = args.first
+ 
+@@ -504,7 +556,40 @@
+ files = fetcher.files
+ commit = fetcher.commit
+ puts "Found #{files.length} dependency file(s) at commit #{commit}"
+-files.each { |f| puts " - #{f.path}" }
++ispoetry = false
++files.each do |f| 
++  puts " - #{f.path}" 
++  if f.path.include? "pyproject.toml"
++    ispoetry = true
++  end
++end
++
++# build xignore array
++xignore_env = ENV["XIGNORE"] || ""
++xignore_pre = xignore_env.split(",")
++xignore = []
++replacements = { '-' => '_', '_' => '-'}
++xignore_pre.each do |i|
++  word = i.downcase.strip
++  xignore.concat([word])
++  if word.include?("-") || word.include?("_")
++    xignore.concat([word.gsub(Regexp.union(replacements.keys), replacements)])
++  end
++end
++
++# if poetry then remove XIGNORE dependencies from the actual files!
++if ispoetry
++  remove_deps_pyproject_toml($options[:repo_contents_path], xignore)
++  remove_deps_poetry_lock($options[:repo_contents_path], xignore)
++  files.each do |f| 
++    if f.path.include? "pyproject.toml"
++      f.content = File.read("#{$options[:repo_contents_path]}/pyproject.toml")
++    end
++    if f.path.include? "poetry.lock"
++      f.content = File.read("#{$options[:repo_contents_path]}/poetry.lock")
++    end
++  end
++end
+ 
+ ##############################
+ # Parse the dependency files #
+@@ -520,6 +605,22 @@
  )
  
  dependencies = parser.parse
 +
 +# REMOVE DEPENDENCIES DEFINED IN XIGNORE ENV VARIABLE
-+xignore = ENV["XIGNORE"] || ""
-+dependencies.each do |d| 
-+  xignore.split(",").each do |j|
-+    if d.name == j
-+      puts "FOUND XIGNORED DEPENDENCY: #{d.name} #{d.version} REMOVED FROM DEPENDENCY CHECK"
++if ispoetry == false
++  dependencies.each do |d| 
++    xignore.each do |j|
++      if d.name == j
++        puts "FOUND XIGNORED DEPENDENCY: #{d.name} #{d.version} REMOVED FROM DEPENDENCY CHECK"
++      end
 +    end
 +  end
-+end
 +
-+xignore.split(",").each do |i|
-+  dependencies.delete_if { |d| d.name.downcase == i.downcase.strip }
++  xignore.each do |i|
++    dependencies.delete_if { |d| d.name.downcase == i.downcase.strip }
++  end
 +end
 +
  puts "Found #{dependencies.count(&:top_level?)} dependencies"
